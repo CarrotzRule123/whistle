@@ -21,6 +21,7 @@ pub enum CompilerErrorKind {
   NoProperties,
   Unassignable,
   UnknownOperator,
+  GlobalNotLiteral,
 
   TypeMismatch { type1: Type, type2: Type },
 

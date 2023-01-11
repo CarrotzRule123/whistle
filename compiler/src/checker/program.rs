@@ -68,6 +68,8 @@ pub fn check_fn(
   checker.scope.enter_scope();
 
   for param in params {
+    let ident_type = checker.new_type_val();
+    let param_type = param.type_ident.to_type();
     if let Err(err) = checker.scope.set_local_sym(
       &param.ident,
       Symbol {
@@ -76,8 +78,9 @@ pub fn check_fn(
         types: param.type_ident.to_type(),
       },
     ) {
-      checker.handler.throw(err, param.span.unwrap().clone());
+      checker.handler.throw(err, param.span.unwrap());
     }
+    checker.constraint(ident_type, param_type, None);
   }
 
   let ret = check_stmts(checker, stmts);
