@@ -38,64 +38,76 @@ impl Checker {
   }
 
   pub fn unify(&mut self, constraint: Constraint) {
-    let Constraint { type1, type2, .. } = constraint;
-    // println!("Constraint {:?}, {:?}", type1, type2);
-    let base1 = self.base_type(type1);
-    let base2 = self.base_type(type2);
-    // println!("Base {:?}, {:?}", base1, base2);
-    if let Type::Var(i) = base1 {
-      match (self.substitutions[i].clone(), base2.clone()) {
-        (Type::Array(arr1), Type::Array(arr2)) => {
-          if let Type::Var(j) = *arr1 {
-            self.unify_base(j, *arr2, constraint.span)
-          }
-        }
-        _ => self.unify_base(i, base2, constraint.span),
+    let Constraint { type1, type2, span } = constraint;
+    match self.unify_base(type1, type2) {
+      Ok(()) => return,
+      Err((type1, type2)) => {
+        let err = CompilerErrorKind::TypeMismatch {
+          type1: self.substitute(type1),
+          type2: self.substitute(type2),
+        };
+        self.handler.throw(err, span.unwrap());
       }
-    } else if Checker::is_subtype(base2.clone(), base1.clone()) == None {
-      let err = CompilerErrorKind::TypeMismatch {
-        type1: self.substitute(base1),
-        type2: self.substitute(base2),
-      };
-      self.handler.throw(err, constraint.span.unwrap())
     }
-    // println!("{:?}\n", self.substitutions);
   }
 
-  pub fn unify_base(&mut self, i: usize, base2: Type, span: Option<Span>) {
-    if let Type::Var(j) = base2 {
-      match Checker::is_subtype(self.substitutions[j].clone(), self.substitutions[i].clone()) {
-        Some(is_subtype) => {
-          if is_subtype {
-            self.substitutions[i] = base2
-          } else {
-            self.substitutions[j] = self.substitutions[i].clone()
-          }
+  pub fn unify_base(&mut self, type1: Type, type2: Type) -> Result<(), (Type, Type)> {
+    // println!("{:?}\n", self.substitutions);
+    // println!("Constraint {:?}, {:?}", type1, type2);
+    let base1 = self.base_type(type1.clone());
+    let base2 = self.base_type(type2.clone());
+    // println!("Base {:?}, {:?}", base1, base2);
+
+    match (self.base_val(base1.clone()), self.base_val(base2.clone())) {
+      (Type::Array(type1), Type::Array(type2)) => match self.unify_base(*type1, *type2) {
+        Ok(()) => return Ok(()),
+        Err((type1, type2)) => {
+          return Err((Type::Array(Box::new(type1)), Type::Array(Box::new(type2))))
         }
-        None => {
-          let err = CompilerErrorKind::TypeMismatch {
-            type1: self.substitute(self.substitutions[j].clone()),
-            type2: self.substitute(self.substitutions[i].clone()),
-          };
-          self.handler.throw(err, span.unwrap())
-        }
-      }
-    } else {
-      match Checker::is_subtype(base2.clone(), self.substitutions[i].clone()) {
-        Some(is_subtype) => {
-          if is_subtype {
-            self.substitutions[i] = base2
-          }
-        }
-        None => {
-          let err = CompilerErrorKind::TypeMismatch {
-            type1: self.substitute(self.substitutions[i].clone()),
-            type2: self.substitute(base2.clone()),
-          };
-          self.handler.throw(err, span.unwrap())
-        }
-      }
+      },
+      _ => {}
     }
+
+    let err = match (base1, base2) {
+      (Type::Var(i), Type::Var(j)) => {
+        let type1 = self.substitutions[i].clone();
+        let type2 = self.substitutions[j].clone();
+        if Checker::is_subtype(&type1, &type2) {
+          return Ok(self.substitutions[j] = Type::Var(i));
+        } else if Checker::is_subtype(&type2, &type1) {
+          return Ok(self.substitutions[i] = Type::Var(j));
+        }
+        (type1, type2)
+      }
+      (Type::Var(i), type2) => {
+        let type1 = self.substitutions[i].clone();
+        if Checker::is_subtype(&type1, &type2) {
+          return Ok(());
+        } else if Checker::is_subtype(&type2, &type1) {
+          return Ok(self.substitutions[i] = type2);
+        }
+        (type1, type2)
+      }
+      (type1, Type::Var(j)) => {
+        let type2 = self.substitutions[j].clone();
+        if Checker::is_subtype(&type1, &type2) {
+          return Ok(self.substitutions[j] = type1);
+        } else if Checker::is_subtype(&type2, &type1) {
+          return Ok(());
+        }
+        (type1, type2)
+      }
+      (type1, type2) => {
+        if Checker::is_subtype(&type1, &type2) {
+          return Ok(());
+        } else if Checker::is_subtype(&type2, &type1) {
+          return Ok(());
+        }
+        (type1, type2)
+      }
+    };
+
+    Err(err)
   }
 
   pub fn coerce(types: Type) -> Type {
@@ -126,6 +138,13 @@ impl Checker {
     types
   }
 
+  pub fn base_val(&self, types: Type) -> Type {
+    if let Type::Var(i) = types.clone() {
+      return self.substitutions[i].clone()
+    }
+    types
+  }
+
   pub fn substitute(&self, types: Type) -> Type {
     if let Type::Var(i) = types {
       if Type::Var(i) == self.substitutions[i] {
@@ -138,23 +157,13 @@ impl Checker {
     types
   }
 
-  // pub fn substitute(&self, types: Type) -> Type {
-  //   if let Type::Var(i) = types {
-  //     if let Type::Var(j) = self.substitutions[i] {
-  //       return self.substitutions[j].clone();
-  //     }
-  //     return self.substitutions[i].clone();
-  //   }
-  //   types
-  // }
-
-  pub fn is_subtype(type1: Type, type2: Type) -> Option<bool> {
+  pub fn is_subtype(type1: &Type, type2: &Type) -> bool {
     if let Type::Var(_) = type1 {
-      return Some(true);
+      return false;
     }
 
     if type1 == type2 {
-      return Some(true);
+      return true;
     }
 
     match type2 {
@@ -167,49 +176,24 @@ impl Checker {
           | Type::Primitive(Primitive::F32)
           | Type::Primitive(Primitive::F64)
           | Type::Primitive(Primitive::Int)
-          | Type::Primitive(Primitive::Float) => Some(true),
-          Type::Default => Some(false),
-          _ => None,
+          | Type::Primitive(Primitive::Float) => true,
+          _ => false,
         },
         Primitive::Int => match type1 {
           Type::Primitive(Primitive::I32)
           | Type::Primitive(Primitive::I64)
           | Type::Primitive(Primitive::U32)
-          | Type::Primitive(Primitive::U64) => Some(true),
-          Type::Primitive(Primitive::Number) | Type::Primitive(Primitive::Int) | Type::Default => {
-            Some(false)
-          }
-          _ => None,
+          | Type::Primitive(Primitive::U64) => true,
+          _ => false,
         },
         Primitive::Float => match type1 {
-          Type::Primitive(Primitive::F32) | Type::Primitive(Primitive::F64) => Some(true),
-          Type::Primitive(Primitive::Number)
-          | Type::Primitive(Primitive::Float)
-          | Type::Default => Some(false),
-          _ => None,
+          Type::Primitive(Primitive::F32) | Type::Primitive(Primitive::F64) => true,
+          _ => false,
         },
-        Primitive::I32
-        | Primitive::I64
-        | Primitive::U32
-        | Primitive::U64
-        | Primitive::F32
-        | Primitive::F64
-          if type1 == Type::Primitive(Primitive::Number) =>
-        {
-          Some(false)
-        }
-        Primitive::I32 | Primitive::I64 | Primitive::U32 | Primitive::U64
-          if type1 == Type::Primitive(Primitive::Int) =>
-        {
-          Some(false)
-        }
-        Primitive::F32 | Primitive::F64 if type1 == Type::Primitive(Primitive::Float) => {
-          Some(false)
-        }
-        _ => None,
+        _ => false,
       },
-      Type::Var(_) => Some(true),
-      _ => None,
+      Type::Var(_) => true,
+      _ => false,
     }
   }
 }

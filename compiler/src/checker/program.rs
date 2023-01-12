@@ -75,7 +75,7 @@ pub fn check_fn(
       Symbol {
         global: false,
         mutable: true,
-        types: param.type_ident.to_type(),
+        types: ident_type.clone(),
       },
     ) {
       checker.handler.throw(err, param.span.unwrap());
